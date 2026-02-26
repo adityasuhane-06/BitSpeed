@@ -15,6 +15,8 @@ A backend service that identifies and consolidates customer identity across mult
 - **Identity Reconciliation**: Links customer contacts sharing an email or phone number
 - **Primary/Secondary Linking**: Oldest contact becomes primary, newer ones become secondary
 - **Automatic Merging**: When two separate primary contacts are found to be the same person, they are merged
+- **Input Validation**: Zod schema validation with email format checking
+- **Transaction Safety**: Merge operations wrapped in database transactions
 - **RESTful API**: Single `POST /identify` endpoint
 
 ---
@@ -23,8 +25,69 @@ A backend service that identifies and consolidates customer identity across mult
 
 - **Runtime**: Node.js with TypeScript
 - **Framework**: Express.js
-- **ORM**: Prisma (v7)
-- **Database**: PostgreSQL
+- **ORM**: Prisma (v7) with PostgreSQL
+- **Validation**: Zod
+- **Testing**: Jest + Supertest
+- **Logging**: Morgan
+
+---
+
+## 🏗️ Architecture
+
+```
+src/
+├── config/
+│   ├── index.ts              # Environment configuration
+│   └── database.ts           # Prisma client setup with pg.Pool
+├── controllers/
+│   └── contact.controller.ts # Request validation & response formatting
+├── middleware/
+│   └── errorHandler.ts       # Global error handling middleware
+├── routes/
+│   └── contact.routes.ts     # Route definitions
+├── services/
+│   └── contact.service.ts    # Core reconciliation business logic
+├── validators/
+│   └── identify.validator.ts # Zod request schemas
+├── utils/
+│   └── errors.ts             # Custom error classes (AppError, ValidationError)
+├── __tests__/
+│   └── identify.test.ts      # Integration tests (10 test cases)
+├── generated/prisma/         # Auto-generated Prisma client
+└── index.ts                  # Express app setup, middleware, graceful shutdown
+```
+
+### Design Pattern: Layered Architecture
+
+```
+Request → Routes → Controller → Service → Database
+                      ↓              ↓
+                  Validator      Prisma ORM
+                      ↓
+              Error Middleware ← (catches all errors)
+```
+
+---
+
+## 🧠 Design Decisions
+
+### 1. Transactional Merge Operations
+When two primary contacts need to be merged, the operation involves multiple database updates. These are wrapped in a `prisma.$transaction()` to ensure **atomicity** — either all changes succeed or none do, preventing inconsistent state from race conditions.
+
+### 2. Database Indexing Strategy
+Indexes are placed on `email`, `phoneNumber`, and `linkedId` columns for fast lookups. These are the three most frequently queried fields in the reconciliation algorithm.
+
+### 3. Connection Pooling
+Using `pg.Pool` (via `@prisma/adapter-pg`) for efficient database connection management. Connections are reused across requests rather than creating new ones per query.
+
+### 4. Idempotent Identify Endpoint
+Calling `/identify` with the same data multiple times produces the same result without creating duplicate contacts. The service checks for exact matches before creating new secondary contacts.
+
+### 5. Input Validation with Zod
+Request bodies are validated using Zod schemas at the controller layer. This catches malformed requests (invalid emails, missing fields) before they reach the business logic, providing clear error messages.
+
+### 6. Graceful Shutdown
+The server handles `SIGTERM` and `SIGINT` signals by closing the HTTP server and disconnecting the database client before exiting, preventing connection leaks.
 
 ---
 
@@ -40,8 +103,8 @@ A backend service that identifies and consolidates customer identity across mult
 1. **Clone the repository**
 
 ```bash
-git clone https://github.com/yourusername/bitespeed-backend.git
-cd bitespeed-backend
+git clone https://github.com/adityasuhane-06/BitSpeed.git
+cd BitSpeed
 ```
 
 2. **Install dependencies**
@@ -59,7 +122,7 @@ cp .env.example .env
 Edit `.env` and set your PostgreSQL connection string:
 
 ```
-DATABASE_URL="postgresql://user:password@host:5432/bitespeed?schema=public"
+DATABASE_URL="postgresql://user:password@host:5432/dbname?sslmode=require"
 ```
 
 4. **Run database migrations**
@@ -106,9 +169,9 @@ Identify and consolidate a customer's contact information.
 }
 ```
 
-> At least one of `email` or `phoneNumber` must be provided.
+> At least one of `email` or `phoneNumber` must be provided. Email is validated for format. PhoneNumber can be string or number (auto-converted).
 
-**Response:**
+**Success Response (200):**
 
 ```json
 {
@@ -121,26 +184,37 @@ Identify and consolidate a customer's contact information.
 }
 ```
 
+**Validation Error (400):**
+
+```json
+{
+  "success": false,
+  "error": "Invalid email format"
+}
+```
+
 ---
 
-## 🧪 Testing with cURL
+## 🧪 Running Tests
 
 ```bash
-# Create a new contact
-curl -X POST http://localhost:3000/identify \
-  -H "Content-Type: application/json" \
-  -d '{"email":"lorraine@hillvalley.edu","phoneNumber":"123456"}'
-
-# Link with existing (creates secondary)
-curl -X POST http://localhost:3000/identify \
-  -H "Content-Type: application/json" \
-  -d '{"email":"mcfly@hillvalley.edu","phoneNumber":"123456"}'
-
-# Lookup by email only
-curl -X POST http://localhost:3000/identify \
-  -H "Content-Type: application/json" \
-  -d '{"email":"lorraine@hillvalley.edu"}'
+npm test
 ```
+
+**Test Coverage:**
+
+| Test | Description |
+|------|-------------|
+| New contact creation | Creates primary when no match exists |
+| Secondary creation | Links with existing via shared phone |
+| No duplicate secondaries | Same request doesn't create duplicates |
+| Email-only lookup | Returns consolidated contact |
+| Phone-only lookup | Returns consolidated contact |
+| Primary turnover | Merges two primaries correctly |
+| Empty input validation | Returns 400 for missing fields |
+| Invalid email validation | Returns 400 for bad email format |
+| Numeric phone handling | Converts number to string |
+| Health check | GET / returns status ok |
 
 ---
 
@@ -149,22 +223,4 @@ curl -X POST http://localhost:3000/identify \
 ```bash
 npm run build
 npm start
-```
-
----
-
-## 📁 Project Structure
-
-```
-├── prisma/
-│   └── schema.prisma        # Database schema
-├── src/
-│   ├── generated/prisma/     # Generated Prisma client
-│   ├── services/
-│   │   └── contact.service.ts # Core reconciliation logic
-│   └── index.ts              # Express server entry point
-├── .env.example
-├── package.json
-├── tsconfig.json
-└── README.md
 ```
