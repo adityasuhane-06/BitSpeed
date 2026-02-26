@@ -1,14 +1,17 @@
-import "dotenv/config";
 import express, { Request, Response } from "express";
-import { identifyContact } from "./services/contact.service";
+import morgan from "morgan";
+import { config } from "./config";
+import { prisma } from "./config/database";
+import contactRoutes from "./routes/contact.routes";
+import { errorHandler } from "./middleware/errorHandler";
 
 const app = express();
-const PORT = process.env.PORT || 3000;
 
-// Middleware
+// ─── Middleware ─────────────────────────────────────────────
 app.use(express.json());
+app.use(morgan(config.isProduction ? "combined" : "dev"));
 
-// Health check endpoint
+// ─── Routes ────────────────────────────────────────────────
 app.get("/", (_req: Request, res: Response) => {
     res.json({
         status: "ok",
@@ -16,33 +19,30 @@ app.get("/", (_req: Request, res: Response) => {
     });
 });
 
-// Identity reconciliation endpoint
-app.post("/identify", async (req: Request, res: Response) => {
-    try {
-        const { email, phoneNumber } = req.body;
+app.use(contactRoutes);
 
-        // Validate input — at least one must be provided
-        if (!email && !phoneNumber) {
-            res.status(400).json({
-                error: "At least one of email or phoneNumber must be provided",
-            });
-            return;
-        }
+// ─── Error Handling ────────────────────────────────────────
+app.use(errorHandler);
 
-        const result = await identifyContact({
-            email: email || null,
-            phoneNumber: phoneNumber ? String(phoneNumber) : null,
-        });
-
-        res.status(200).json(result);
-    } catch (error) {
-        console.error("Error in /identify:", error);
-        res.status(500).json({ error: "Internal server error" });
-    }
+// ─── Server & Graceful Shutdown ────────────────────────────
+const server = app.listen(config.port, () => {
+    console.log(`🚀 Server running on port ${config.port} [${config.nodeEnv}]`);
 });
 
-app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
-});
+/**
+ * Graceful shutdown handler.
+ * Closes the HTTP server and disconnects Prisma before exiting.
+ */
+async function gracefulShutdown(signal: string): Promise<void> {
+    console.log(`\n${signal} received. Shutting down gracefully...`);
+    server.close(async () => {
+        await prisma.$disconnect();
+        console.log("Database connection closed.");
+        process.exit(0);
+    });
+}
+
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 
 export default app;
