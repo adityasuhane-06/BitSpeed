@@ -1,9 +1,16 @@
 import "dotenv/config";
 import { PrismaClient, Contact } from "../generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
+import pg from "pg";
 
-// Create the PostgreSQL adapter using the DATABASE_URL
-const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
+// Create a pg Pool with SSL support for Render PostgreSQL
+const pool = new pg.Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false },
+});
+
+// Create the PostgreSQL adapter using the Pool
+const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
 interface IdentifyRequest {
