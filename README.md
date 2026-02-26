@@ -32,39 +32,75 @@ A backend service that identifies and consolidates customer identity across mult
 
 ---
 
-## 🏗️ Architecture
+## 🏗️ Architecture & System Design
+
+### Clean Architecture Layers
+
+Our codebase is structured to separate concerns, making it highly testable and maintainable:
 
 ```
 src/
-├── config/
-│   ├── index.ts              # Environment configuration
-│   └── database.ts           # Prisma client setup with pg.Pool
-├── controllers/
-│   └── contact.controller.ts # Request validation & response formatting
-├── middleware/
-│   └── errorHandler.ts       # Global error handling middleware
-├── routes/
-│   └── contact.routes.ts     # Route definitions
-├── services/
-│   └── contact.service.ts    # Core reconciliation business logic
-├── validators/
-│   └── identify.validator.ts # Zod request schemas
-├── utils/
-│   └── errors.ts             # Custom error classes (AppError, ValidationError)
-├── __tests__/
-│   └── identify.test.ts      # Integration tests (10 test cases)
-├── generated/prisma/         # Auto-generated Prisma client
-└── index.ts                  # Express app setup, middleware, graceful shutdown
+├── config/           # Infrastructure setup (Environment, DB Pool)
+├── routes/           # API endpoints (Express routing)
+├── controllers/      # Request lifecycle (Zod validation, error catching)
+├── services/         # Core business logic & transactions
+├── validators/       # Input schemas (Zod)
+├── middleware/       # Global error formatting
+└── index.ts          # Express app composition & graceful shutdown
 ```
 
-### Design Pattern: Layered Architecture
+### Request Lifecycle (Control Flow)
 
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Router as Express Router
+    participant Validator as Zod Validator
+    participant Service as Contact Service
+    participant DB as PostgreSQL (Prisma)
+    
+    Client->>Router: POST /identify { email, phone }
+    Router->>Validator: Validate Input
+    
+    alt Invalid Input
+        Validator-->>Client: 400 Bad Request (Error Details)
+    else Valid Input
+        Validator->>Service: identifyContact(data)
+        
+        Service->>DB: Query exact matches (email OR phone)
+        DB-->>Service: Return matching records
+        
+        alt No Matches Found
+            Service->>DB: Create new Primary Contact
+        else Matches Found
+            Service->>DB: BEGIN Transaction
+            Service->>DB: Update newer contacts to secondary
+            Service->>DB: Link all to oldest Primary
+            Service->>DB: COMMIT Transaction
+        end
+        
+        Service->>DB: Fetch consolidated group
+        DB-->>Service: Return all linked contacts
+        Service-->>Client: 200 OK (Consolidated Identity)
+    end
 ```
-Request → Routes → Controller → Service → Database
-                      ↓              ↓
-                  Validator      Prisma ORM
-                      ↓
-              Error Middleware ← (catches all errors)
+
+### Database Schema
+
+```mermaid
+erDiagram
+    Contact {
+        Int id PK
+        String phoneNumber "nullable"
+        String email "nullable"
+        Int linkedId "FK (Self-referencing), nullable"
+        String linkPrecedence "primary | secondary"
+        DateTime createdAt
+        DateTime updatedAt
+        DateTime deletedAt "nullable"
+    }
+
+    Contact ||--o{ Contact : "links to (secondary)"
 ```
 
 ---
