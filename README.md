@@ -4,9 +4,9 @@ A backend service that identifies and consolidates customer identity across mult
 
 ## 🚀 Live Endpoint
 
-> **Base URL**: `https://your-app.onrender.com`
+> **Base URL**: `https://bitspeed-m9io.onrender.com`
 >
-> Replace with your deployed URL after hosting.
+> **Identify Endpoint**: `POST https://bitspeed-m9io.onrender.com/identify`
 
 ---
 
